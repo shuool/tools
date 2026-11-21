@@ -131,8 +131,8 @@ const hotTabs = [
   { id: "bilibili", label: "B站" }
 ];
 
-/* 上游无 CORS。GitHub Pages 等静态托管请部署 workers/api-proxy.js，
-   并把 Worker 地址写到 site-config.json 的 apiProxy。 */
+/* 热搜 / 天气：优先直连；浏览器跨域失败时走 apiProxy / 公共网关。
+   GitHub Pages 请部署 workers/api-proxy.js，并写入 site-config.json 的 apiProxy。 */
 const HOT_UPSTREAM = "https://api.vsaa.cn/api/toolbox/hot/hot.php";
 const WEATHER_UPSTREAM = "https://api.vsaa.cn/api/weather/index.php";
 
@@ -145,16 +145,14 @@ function normalizeProxyBase(value) {
 function buildRequestUrls(upstream, apiProxy) {
   const encoded = encodeURIComponent(upstream);
   const urls = [];
+  urls.push(upstream);
   const proxy = normalizeProxyBase(apiProxy);
-  if (proxy) {
-    urls.push(proxy + "?url=" + encoded);
-  }
-  /* 公共网关仅作兜底，线上请配置自己的 apiProxy */
+  if (proxy) urls.push(proxy + "?url=" + encoded);
   urls.push(
     "https://api.allorigins.win/raw?url=" + encoded,
-    "https://api.allorigins.win/get?url=" + encoded
+    "https://api.allorigins.win/get?url=" + encoded,
+    "https://corsproxy.io/?" + encoded
   );
-  urls.push(upstream);
   return urls;
 }
 
@@ -172,9 +170,9 @@ function unwrapProxyJson(raw) {
 async function fetchJsonCandidates(urls, validate) {
   let lastError = null;
   for (let i = 0; i < urls.length; i++) {
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), 12000) : null;
     try {
-      const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-      const timer = controller ? setTimeout(() => controller.abort(), 12000) : null;
       const response = await fetch(urls[i], {
         method: "GET",
         cache: "no-store",
@@ -183,10 +181,11 @@ async function fetchJsonCandidates(urls, validate) {
       if (timer) clearTimeout(timer);
       if (!response.ok) throw new Error("HTTP " + response.status);
       const payload = unwrapProxyJson(await response.json());
-      const checked = validate(payload);
+      const checked = validate ? validate(payload) : payload;
       if (checked) return checked;
       throw new Error("接口返回异常");
     } catch (error) {
+      if (timer) clearTimeout(timer);
       lastError = error;
     }
   }
@@ -247,7 +246,7 @@ const app = Vue.createApp({
       linksOpen: false,
       activeToolTag: "全部",
       petalFrame: 0,
-      hotSource: "weibo",
+      hotSource: "baidu",
       hotSources: {},
       hotUpdated: "",
       hotLoading: false,
@@ -975,8 +974,9 @@ const app = Vue.createApp({
     buildHotQuery(forceRefresh) {
       const limit = Math.max(1, Math.min(50, Number(this.hotLimit) || 10));
       this.hotLimit = limit;
+      const source = String(this.hotSource || "baidu").trim() || "baidu";
       const params = new URLSearchParams({
-        source: "all",
+        source: source,
         limit: String(limit)
       });
       if (forceRefresh) params.set("refresh", "1");
@@ -990,6 +990,13 @@ const app = Vue.createApp({
       this.loadHot(true);
     },
 
+    selectHotSource(id) {
+      const next = String(id || "").trim() || "baidu";
+      if (this.hotSource === next && this.hotSources[next] && !this.hotError) return;
+      this.hotSource = next;
+      this.loadHot(false);
+    },
+
     async loadHot(forceRefresh) {
       if (this.hotLoading) return;
       this.hotLoading = true;
@@ -999,13 +1006,14 @@ const app = Vue.createApp({
         const payload = await fetchJsonCandidates(
           buildRequestUrls(upstream, this.apiProxy),
           (data) => {
-            if (!data || data.code !== 1 || !data.data) {
+            if (!data || Number(data.code) !== 1 || !data.data) {
               throw new Error((data && data.msg) || "热榜数据暂时不可用");
             }
             return data;
           }
         );
-        this.hotSources = payload.data.sources || {};
+        const incoming = payload.data.sources || {};
+        this.hotSources = Object.assign({}, this.hotSources, incoming);
         this.hotUpdated = payload.data.updated || "";
         if (!this.hotSources[this.hotSource]) {
           const first = this.hotTabs.find((tab) => this.hotSources[tab.id]);
@@ -1016,7 +1024,7 @@ const app = Vue.createApp({
         if (/Failed to fetch|NetworkError|CORS|abort/i.test(msg)) {
           this.hotError = this.apiProxy
             ? "热榜请求失败，请检查 apiProxy"
-            : "热榜跨域失败：请配置 site-config.json 的 apiProxy（见 workers/api-proxy.js）";
+            : "热榜跨域失败：请在 site-config.json 配置 apiProxy（见 workers/api-proxy.js）";
         } else {
           this.hotError = msg || "热榜数据暂时不可用，稍后再试";
         }
@@ -1062,7 +1070,7 @@ const app = Vue.createApp({
         const payload = await fetchJsonCandidates(
           buildRequestUrls(upstream, this.apiProxy),
           (data) => {
-            if (!data || !(data.success === true || data.code === 200) || !data.current) {
+            if (!data || !(data.success === true || Number(data.code) === 200) || !data.current) {
               throw new Error((data && (data.msg || data.message)) || "天气数据暂时不可用");
             }
             return data;
@@ -1074,7 +1082,7 @@ const app = Vue.createApp({
         if (/Failed to fetch|NetworkError|CORS|abort/i.test(msg)) {
           this.weatherError = this.apiProxy
             ? "天气请求失败，请检查 apiProxy"
-            : "天气跨域失败：请配置 site-config.json 的 apiProxy（见 workers/api-proxy.js）";
+            : "天气跨域失败：请在 site-config.json 配置 apiProxy（见 workers/api-proxy.js）";
         } else {
           this.weatherError = msg || "天气数据暂时不可用，稍后再试";
         }

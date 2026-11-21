@@ -244,7 +244,7 @@
               <button v-for="tab in hotTabs" :key="tab.id" type="button" role="tab"
                 :aria-selected="String(hotSource === tab.id)"
                 :class="{ active: hotSource === tab.id, stale: hotSources[tab.id] && hotSources[tab.id].stale }"
-                @click="hotSource = tab.id">{{ tab.label }}</button>
+                @click="selectHotSource(tab.id)">{{ tab.label }}</button>
             </div>
 
             <div class="hot-scroll">
