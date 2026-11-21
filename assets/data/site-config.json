@@ -1,4 +1,6 @@
 {
+  "base": "/tools/",
+  "siteUrl": "https://shuool.github.io/tools/",
   "apiProxy": "",
   "music": [
     {

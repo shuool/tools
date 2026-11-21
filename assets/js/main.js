@@ -1,12 +1,14 @@
 /* ==========================================================================
    饭烁的小玩具 · Vue 3 小站
    --------------------------------------------------------------------------
+   部署：GitHub Pages 子路径 https://shuool.github.io/tools/
+     site-config.json 里配置 siteUrl / base（当前 base: "/tools/"）
    外联 / 工具只改 assets/data/site-config.json：
    工具树状结构：
      tools: [{ tag: '实用', items: [{ title, desc, avatar, tone, type, link, modal }] }]
    工具 type：
      external — 外部链接（link: 'https://...'）
-     internal — 内部链接（link: './tools/x.html' 或 '#color'）
+     internal — 内部链接（link: 'page.html' 或 '#color'）
      modal    — 弹框（modal: { title, text, hint }）
    未写 type 时会按 link / modal 自动推断。
    音乐：
@@ -14,6 +16,29 @@
    ========================================================================== */
 const SITE_CONFIG_URL = "assets/data/site-config.json";
 const QUICK_LINK_VISIBLE = 4;
+
+function normalizeSiteBase(base) {
+  let value = String(base || "").trim();
+  if (!value) return "";
+  if (!value.startsWith("/")) value = "/" + value;
+  if (!value.endsWith("/")) value += "/";
+  return value;
+}
+
+function detectSiteBase() {
+  const path = String((window.location && window.location.pathname) || "/");
+  if (path.endsWith("/")) return path || "/";
+  if (/\.html?$/i.test(path)) return path.replace(/\/[^/]+$/, "/") || "/";
+  return path.replace(/\/?$/, "/") || "/";
+}
+
+function joinSitePath(base, path) {
+  const raw = String(path || "").trim();
+  if (!raw) return base || "/";
+  if (/^https?:\/\//i.test(raw) || raw.charAt(0) === "#" || raw.charAt(0) === "/") return raw;
+  const cleaned = raw.replace(/^\.\//, "");
+  return (base || "/") + cleaned;
+}
 
 const site = {
   name: "饭烁的小玩具",
@@ -203,6 +228,8 @@ const app = Vue.createApp({
       quickLinkVisible: QUICK_LINK_VISIBLE,
       author: site.author,
       apiProxy: "",
+      siteUrl: "",
+      siteBase: detectSiteBase(),
       configReady: false,
       engines,
       sections,
@@ -633,6 +660,20 @@ const app = Vue.createApp({
 
     applySiteConfig(payload) {
       const next = payload && typeof payload === "object" ? payload : {};
+      const configuredBase = normalizeSiteBase(next.base);
+      const detectedBase = detectSiteBase();
+      const configuredUrl = String(next.siteUrl || "").trim().replace(/\/$/, "");
+      const onConfiguredHost = Boolean(
+        configuredUrl &&
+        window.location.href.replace(/\/$/, "").indexOf(configuredUrl) === 0
+      );
+      if (configuredBase && (onConfiguredHost || detectedBase.indexOf(configuredBase) === 0)) {
+        this.siteBase = configuredBase;
+      } else {
+        this.siteBase = detectedBase || configuredBase || "/";
+      }
+      this.siteUrl = configuredUrl ||
+        (window.location.origin + this.siteBase.replace(/\/$/, ""));
       this.toolGroups = this.normalizeToolTree(next.tools);
       this.tools = this.flattenToolTree(this.toolGroups);
       this.quickLinks = Array.isArray(next.quickLinks) ? next.quickLinks : [];
@@ -1166,8 +1207,11 @@ const app = Vue.createApp({
 
     toolHref(tool) {
       if (!tool) return "#";
-      if (tool.type === "external" || tool.type === "internal") {
-        return tool.link || "#";
+      if (tool.type === "external") return tool.link || "#";
+      if (tool.type === "internal") {
+        if (!tool.link) return "#";
+        if (tool.link.charAt(0) === "#") return tool.link;
+        return joinSitePath(this.siteBase, tool.link);
       }
       return "#";
     },
@@ -1201,7 +1245,7 @@ const app = Vue.createApp({
         const target = document.getElementById(id) || document.querySelector(link);
         if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
       } else {
-        window.location.href = link;
+        window.location.href = joinSitePath(this.siteBase, link);
       }
     },
 
